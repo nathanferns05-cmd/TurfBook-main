@@ -3,7 +3,7 @@ import { supabase } from "@/integrations/supabase/client";
 import { LOCATIONS, rupees, sportBySlug } from "@/lib/turf";
 import { useQuery } from "@tanstack/react-query";
 import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
-import { ArrowLeft, MapPin } from "lucide-react";
+import { ArrowLeft, MapPin, Star } from "lucide-react";
 import { useState } from "react";
 
 type TurfRow = {
@@ -39,6 +39,25 @@ function SportTurfs() {
       const { data, error } = await query.order("created_at", { ascending: false });
       if (error) throw error;
       return data as TurfRow[];
+    },
+  });
+
+  const turfIds = turfs?.map((t) => t.id) ?? [];
+  const { data: ratings } = useQuery({
+    queryKey: ["turf-ratings", turfIds],
+    enabled: turfIds.length > 0,
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from("turf_ratings")
+        .select("turf_id, avg_rating, review_count")
+        .in("turf_id", turfIds);
+      if (error) throw error;
+      return new Map(
+        (data as { turf_id: string; avg_rating: number; review_count: number }[]).map((r) => [
+          r.turf_id,
+          r,
+        ]),
+      );
     },
   });
 
@@ -106,8 +125,21 @@ function SportTurfs() {
             <div className="flex items-end justify-between gap-3 p-4">
               <div className="min-w-0">
                 <h2 className="truncate font-display text-lg font-bold">{turf.name}</h2>
-                <p className="mt-1 inline-flex items-center gap-1 text-xs text-muted-foreground">
-                  <MapPin className="size-3.5" /> {turf.location}
+                <p className="mt-1 flex items-center gap-3 text-xs text-muted-foreground">
+                  <span className="inline-flex items-center gap-1">
+                    <MapPin className="size-3.5" /> {turf.location}
+                  </span>
+                  {ratings?.get(turf.id) ? (
+                    <span className="inline-flex items-center gap-1">
+                      <Star className="size-3.5 fill-accent text-accent" />
+                      <span className="font-semibold text-foreground">
+                        {Number(ratings.get(turf.id)!.avg_rating).toFixed(1)}
+                      </span>
+                      ({ratings.get(turf.id)!.review_count})
+                    </span>
+                  ) : (
+                    <span>No reviews yet</span>
+                  )}
                 </p>
                 {!!turf.amenities?.length && (
                   <p className="mt-1.5 truncate text-xs text-muted-foreground">

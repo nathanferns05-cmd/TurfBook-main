@@ -7,19 +7,20 @@ import { roleForCurrentUser } from "@/hooks/useSession";
 import { supabase } from "@/integrations/supabase/client";
 import { registerAccount } from "@/lib/accounts.functions";
 import { isStrongPassword, PASSWORD_ERROR } from "@/lib/password";
+import { isIndianPhone, normalizeIndianPhone, PHONE_ERROR } from "@/lib/phone";
 import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
 import { useServerFn } from "@tanstack/react-start";
-import { ArrowLeft, Loader2, MailCheck } from "lucide-react";
+import { ArrowLeft, Eye, EyeOff, Loader2, MailCheck } from "lucide-react";
 import { useEffect, useState } from "react";
 import { toast } from "sonner";
 
 type Role = "player" | "admin";
-type Mode = "signin" | "signup" | "forgot";
+type Mode = "signin" | "otp" | "signup" | "forgot";
 
 export const Route = createFileRoute("/auth")({
   validateSearch: (search: Record<string, unknown>) => ({
     role: (search.role === "admin" ? "admin" : "player") as Role,
-    mode: (["signin", "signup", "forgot"].includes(String(search.mode))
+    mode: (["signin", "otp", "signup", "forgot"].includes(String(search.mode))
       ? String(search.mode)
       : "signin") as Mode,
   }),
@@ -28,7 +29,7 @@ export const Route = createFileRoute("/auth")({
       { title: "Sign in — TurfBook" },
       {
         name: "description",
-        content: "Sign in with a one-time code, or create your TurfBook player or turf owner account.",
+        content: "Sign in with your password or a one-time code, or create your TurfBook player or turf owner account.",
       },
       { property: "og:title", content: "Sign in — TurfBook" },
       { property: "og:description", content: "Access your TurfBook player or turf owner account." },
@@ -65,9 +66,20 @@ function AuthPage() {
     navigate({ to: "/auth", search: { role, mode: next } });
   };
 
+  /** Only lets the user in through the login matching their account type. */
   const goHome = async () => {
     const actual = (await roleForCurrentUser()) ?? role;
+    if (actual !== role) {
+      await supabase.auth.signOut();
+      toast.error(
+        actual === "admin"
+          ? "This is a turf owner account. Please use the Turf owner login."
+          : "This is a player account. Please use the Player login.",
+      );
+      return false;
+    }
     navigate({ to: actual === "admin" ? "/admin" : "/player", replace: true });
+    return true;
   };
 
   const sendOtp = async (createUser = false) => {
@@ -111,8 +123,12 @@ function AuthPage() {
       toast.error(/expired/i.test(error.message) ? "Code expired. Send a new one." : "Wrong code. Try again.");
       return;
     }
-    toast.success("Verified!");
-    await goHome();
+    if (await goHome()) {
+      toast.success("Verified!");
+    } else {
+      setOtpSent(false);
+      setOtp("");
+    }
   };
 
   const handleSendSignInOtp = async () => {
@@ -121,9 +137,35 @@ function AuthPage() {
     setBusy(false);
   };
 
+  const handlePasswordSignIn = async () => {
+    if (!email.trim() || !password) {
+      toast.error("Enter your email and password.");
+      return;
+    }
+    setBusy(true);
+    const { error } = await supabase.auth.signInWithPassword({
+      email: email.trim().toLowerCase(),
+      password,
+    });
+    setBusy(false);
+    if (error) {
+      toast.error(
+        /invalid login credentials/i.test(error.message)
+          ? "Wrong email or password. Forgot it? Sign in with OTP instead."
+          : error.message,
+      );
+      return;
+    }
+    await goHome();
+  };
+
   const handleSignUp = async () => {
     if (!fullName.trim() || !phone.trim() || !email.trim() || !password) {
       toast.error("Please fill every field.");
+      return;
+    }
+    if (!isIndianPhone(phone)) {
+      toast.error(PHONE_ERROR);
       return;
     }
     if (!isStrongPassword(password)) {
@@ -139,7 +181,7 @@ function AuthPage() {
       await register({
         data: {
           fullName: fullName.trim(),
-          phone: phone.trim(),
+          phone: normalizeIndianPhone(phone),
           email: email.trim().toLowerCase(),
           password,
           role,
@@ -200,7 +242,9 @@ function AuthPage() {
                 : "Book your first slot in under a minute."
               : mode === "forgot"
                 ? "We'll email you a link to set a new password."
-                : "Enter your email — we'll send a one-time code."}
+                : mode === "otp"
+                  ? "Enter your email — we'll send a one-time code."
+                  : "Sign in with your email and password."}
         </p>
       </div>
 
@@ -249,13 +293,25 @@ function AuthPage() {
                 <Field label="Full name">
                   <Input value={fullName} onChange={(e) => setFullName(e.target.value)} placeholder="Rohit Sharma" />
                 </Field>
-                <Field label="Mobile number">
-                  <Input
-                    value={phone}
-                    onChange={(e) => setPhone(e.target.value)}
-                    inputMode="tel"
-                    placeholder="98XXXXXXXX"
-                  />
+                <Field label="Mobile number (India)">
+                  <div className="relative">
+                    <span className="pointer-events-none absolute inset-y-0 left-3 flex items-center text-sm text-muted-foreground">
+                      +91
+                    </span>
+                    <Input
+                      value={phone}
+                      onChange={(e) => setPhone(e.target.value.replace(/[^\d+\s-]/g, ""))}
+                      inputMode="tel"
+                      autoComplete="tel-national"
+                      maxLength={16}
+                      placeholder="98XXXXXXXX"
+                      className="pl-12"
+                      aria-invalid={phone.trim() !== "" && !isIndianPhone(phone)}
+                    />
+                  </div>
+                  {phone.trim() !== "" && !isIndianPhone(phone) && (
+                    <p className="text-xs text-destructive">{PHONE_ERROR}</p>
+                  )}
                 </Field>
               </>
             )}
@@ -273,14 +329,22 @@ function AuthPage() {
 
             {mode === "signup" && (
               <Field label="Password">
-                <Input
+                <PasswordInput
                   value={password}
-                  onChange={(e) => setPassword(e.target.value)}
-                  type="password"
+                  onChange={setPassword}
                   autoComplete="new-password"
-                  placeholder="••••••••"
                 />
                 <PasswordChecklist password={password} />
+              </Field>
+            )}
+
+            {mode === "signin" && (
+              <Field label="Password">
+                <PasswordInput
+                  value={password}
+                  onChange={setPassword}
+                  autoComplete="current-password"
+                />
               </Field>
             )}
 
@@ -298,27 +362,44 @@ function AuthPage() {
               className="h-12 w-full text-base font-semibold"
               disabled={busy}
               onClick={
-                mode === "signup" ? handleSignUp : mode === "forgot" ? handleForgot : handleSendSignInOtp
+                mode === "signup"
+                  ? handleSignUp
+                  : mode === "forgot"
+                    ? handleForgot
+                    : mode === "otp"
+                      ? handleSendSignInOtp
+                      : handlePasswordSignIn
               }
             >
               {busy && <Loader2 className="mr-2 size-4 animate-spin" />}
-              {mode === "signup" ? "Create account" : mode === "forgot" ? "Send reset link" : "Send OTP"}
+              {mode === "signup"
+                ? "Create account"
+                : mode === "forgot"
+                  ? "Send reset link"
+                  : mode === "otp"
+                    ? "Send OTP"
+                    : "Sign in"}
             </Button>
 
             <div className="flex flex-col items-center gap-1 pt-1 text-sm">
               {mode === "signin" && (
                 <>
-                  <button className="text-muted-foreground underline" onClick={() => setMode("forgot")}>
-                    Forgot password?
+                  <button className="text-muted-foreground underline" onClick={() => setMode("otp")}>
+                    Forgot password? Sign in with OTP
                   </button>
                   <button className="text-primary" onClick={() => setMode("signup")}>
                     Create a new account
                   </button>
                 </>
               )}
+              {mode === "otp" && (
+                <button className="text-muted-foreground underline" onClick={() => setMode("forgot")}>
+                  Reset password by email instead
+                </button>
+              )}
               {mode !== "signin" && (
                 <button className="text-primary" onClick={() => setMode("signin")}>
-                  Back to sign in
+                  Back to password sign in
                 </button>
               )}
             </div>
@@ -326,6 +407,38 @@ function AuthPage() {
         )}
       </div>
     </main>
+  );
+}
+
+function PasswordInput({
+  value,
+  onChange,
+  autoComplete,
+}: {
+  value: string;
+  onChange: (value: string) => void;
+  autoComplete: string;
+}) {
+  const [visible, setVisible] = useState(false);
+  return (
+    <div className="relative">
+      <Input
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        type={visible ? "text" : "password"}
+        autoComplete={autoComplete}
+        placeholder="••••••••"
+        className="pr-11"
+      />
+      <button
+        type="button"
+        onClick={() => setVisible((v) => !v)}
+        aria-label={visible ? "Hide password" : "Show password"}
+        className="absolute inset-y-0 right-0 flex w-11 items-center justify-center text-muted-foreground"
+      >
+        {visible ? <EyeOff className="size-4" /> : <Eye className="size-4" />}
+      </button>
+    </div>
   );
 }
 

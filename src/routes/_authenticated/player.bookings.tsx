@@ -75,6 +75,10 @@ function MyBookings() {
 
         {bookings?.map((booking) => {
           const cancelled = booking.status === "cancelled";
+          const slotEnd = new Date(`${booking.booking_date}T00:00`);
+          slotEnd.setHours(booking.slot_hour + 1);
+          const past = slotEnd.getTime() <= Date.now();
+          const pending = booking.status === "pending" && !past;
           return (
             <div key={booking.id} className="card-surface space-y-2 p-4">
               <div className="flex items-start justify-between gap-3">
@@ -90,20 +94,26 @@ function MyBookings() {
                   className={`rounded-full px-2.5 py-1 text-xs font-semibold ${
                     cancelled
                       ? "bg-destructive/15 text-destructive"
-                      : booking.status === "pending"
-                        ? "bg-accent/15 text-accent"
-                        : "bg-success/15 text-success"
+                      : past
+                        ? "bg-muted text-muted-foreground"
+                        : pending
+                          ? "bg-accent/15 text-accent"
+                          : "bg-success/15 text-success"
                   }`}
                 >
                   {cancelled
                     ? "Cancelled"
-                    : booking.status === "pending"
-                      ? "Pending payment"
-                      : "Confirmed"}
+                    : past
+                      ? booking.status === "pending"
+                        ? "Expired"
+                        : "Completed"
+                      : pending
+                        ? "Pending payment"
+                        : "Confirmed"}
                 </span>
               </div>
 
-              {booking.status === "pending" && (
+              {pending && (
                 <p className="rounded-xl bg-muted/40 px-3 py-2 text-xs leading-relaxed text-muted-foreground">
                   Payment not completed. This slot is only held — it becomes confirmed as soon as
                   the payment goes through.
@@ -132,7 +142,7 @@ function MyBookings() {
                 </span>
               </p>
 
-              {!cancelled && (
+              {!cancelled && !past && (
                 <AlertDialog>
                   <AlertDialogTrigger asChild>
                     <Button variant="outline" size="sm" className="mt-1 w-full">

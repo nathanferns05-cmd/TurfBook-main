@@ -1,4 +1,5 @@
 import { isStrongPassword, PASSWORD_ERROR } from "@/lib/password";
+import { isIndianPhone, normalizeIndianPhone, PHONE_ERROR } from "@/lib/phone";
 import { createServerFn } from "@tanstack/react-start";
 import { z } from "zod";
 
@@ -7,7 +8,12 @@ export const registerAccount = createServerFn({ method: "POST" })
     z
       .object({
         fullName: z.string().trim().min(2).max(80),
-        phone: z.string().trim().min(7).max(20),
+        phone: z
+          .string()
+          .trim()
+          .max(20)
+          .refine(isIndianPhone, PHONE_ERROR)
+          .transform(normalizeIndianPhone),
         email: z.string().trim().email().max(160),
         password: z.string().max(72).refine(isStrongPassword, PASSWORD_ERROR),
         role: z.enum(["player", "admin"]),

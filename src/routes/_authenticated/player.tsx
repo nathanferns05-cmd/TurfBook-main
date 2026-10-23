@@ -1,8 +1,11 @@
-import { useMyProfile } from "@/hooks/useSession";
-import { createFileRoute, Link, Outlet, useRouterState } from "@tanstack/react-router";
+import { roleForCurrentUser, useMyProfile } from "@/hooks/useSession";
+import { createFileRoute, Link, Outlet, redirect, useRouterState } from "@tanstack/react-router";
 import { CalendarCheck, Headphones, Home, User } from "lucide-react";
 
 export const Route = createFileRoute("/_authenticated/player")({
+  beforeLoad: async () => {
+    if ((await roleForCurrentUser()) === "admin") throw redirect({ to: "/admin" });
+  },
   component: PlayerLayout,
 });
 

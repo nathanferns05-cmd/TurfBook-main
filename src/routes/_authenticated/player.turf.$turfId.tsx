@@ -1,5 +1,6 @@
 import { SlotGrid } from "@/components/SlotGrid";
 import { TurfImage } from "@/components/TurfImage";
+import { StarRow, TurfReviews } from "@/components/TurfReviews";
 import { Button } from "@/components/ui/button";
 import { supabase } from "@/integrations/supabase/client";
 
@@ -41,6 +42,19 @@ function TurfSlots() {
     },
   });
 
+  const { data: rating } = useQuery({
+    queryKey: ["turf-ratings", turfId],
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from("turf_ratings")
+        .select("avg_rating, review_count")
+        .eq("turf_id", turfId)
+        .maybeSingle();
+      if (error) throw error;
+      return data as { avg_rating: number; review_count: number } | null;
+    },
+  });
+
   const slots = turf ? slotRange(turf.open_hour, turf.close_hour) : [];
   const booked = new Set<number>(bookedHours ?? []);
   const toggleHour = (h: number) =>
@@ -69,6 +83,15 @@ function TurfSlots() {
       <p className="mt-1.5 inline-flex items-center gap-1 text-sm text-muted-foreground">
         <MapPin className="size-4" /> {turf?.address || turf?.location}
       </p>
+      {rating && rating.review_count > 0 && (
+        <a href="#reviews" className="mt-1.5 flex items-center gap-1.5 text-sm">
+          <span className="font-bold">{Number(rating.avg_rating).toFixed(1)}</span>
+          <StarRow rating={Number(rating.avg_rating)} />
+          <span className="text-muted-foreground underline">
+            {rating.review_count} review{rating.review_count > 1 ? "s" : ""}
+          </span>
+        </a>
+      )}
       {turf && (
         <div className="mt-2 space-y-0.5 text-sm">
           <p>
@@ -149,6 +172,10 @@ function TurfSlots() {
           date={date}
           priceFor={turf ? (h) => slotPrice(turf, h) : undefined}
         />
+      </div>
+
+      <div id="reviews" className={hours.length > 0 ? "pb-40" : undefined}>
+        <TurfReviews turfId={turfId} ownerId={turf?.owner_id} />
       </div>
 
       {hours.length > 0 && turf && (

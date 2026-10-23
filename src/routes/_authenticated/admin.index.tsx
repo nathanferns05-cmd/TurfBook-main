@@ -99,10 +99,10 @@ function AdminTurfs() {
     mutationFn: async (form: FormData) => {
       const parsed = schema.parse(Object.fromEntries(form));
       if (!photoFile && !existingPhoto) {
-        throw new Error("Turf ka photo dalna zaroori hai");
+        throw new Error("Please upload a turf photo.");
       }
       if (amenities.length === 0) {
-        throw new Error("Kam se kam ek amenity select karo");
+        throw new Error("Please select at least one amenity.");
       }
 
       let imagePath = existingPhoto;
@@ -320,7 +320,7 @@ function AdminTurfs() {
                       const file = e.target.files?.[0];
                       if (!file) return;
                       if (file.size > 5 * 1024 * 1024) {
-                        toast.error("Photo 5MB se chhoti honi chahiye");
+                        toast.error("Photo must be smaller than 5MB.");
                         return;
                       }
                       setPhotoFile(file);

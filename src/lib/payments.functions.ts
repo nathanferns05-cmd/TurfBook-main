@@ -1,10 +1,55 @@
 import { requireSupabaseAuth } from "@/integrations/supabase/auth-middleware";
+import { slotRange } from "@/lib/turf";
 import { createServerFn } from "@tanstack/react-start";
 import { z } from "zod";
 
+const IST_OFFSET_MS = 5.5 * 60 * 60 * 1000;
+const BOOKING_WINDOW_DAYS = 7;
+
+/** Today's date (YYYY-MM-DD) and current hour in India, whatever the server's timezone. */
+function nowInIndia() {
+  const ist = new Date(Date.now() + IST_OFFSET_MS);
+  return { date: ist.toISOString().slice(0, 10), hour: ist.getUTCHours() };
+}
+
+function addDays(isoDate: string, days: number) {
+  const d = new Date(`${isoDate}T00:00:00Z`);
+  d.setUTCDate(d.getUTCDate() + days);
+  return d.toISOString().slice(0, 10);
+}
+
+/**
+ * Same rules as the slot grid: the date must be within the booking window, every
+ * hour must be inside opening hours, and today's slots are bookable only once
+ * the current hour has ended (a slot that has started counts as passed).
+ */
+function assertBookableSlots(
+  turf: { open_hour: number; close_hour: number },
+  bookingDate: string,
+  hours: number[],
+) {
+  const now = nowInIndia();
+  const lastDate = addDays(now.date, BOOKING_WINDOW_DAYS - 1);
+  if (bookingDate < now.date) throw new Error("That date has already passed.");
+  if (bookingDate > lastDate) {
+    throw new Error(`You can only book up to ${BOOKING_WINDOW_DAYS} days ahead.`);
+  }
+
+  const open = new Set(slotRange(turf.open_hour, turf.close_hour));
+  if (hours.some((h) => !open.has(h))) {
+    throw new Error("One of those slots is outside the turf's opening hours.");
+  }
+  if (bookingDate === now.date && hours.some((h) => h <= now.hour)) {
+    throw new Error("One of those slots has already started or passed. Please pick again.");
+  }
+}
+
 const orderInput = z.object({
   turf_id: z.string().uuid(),
-  booking_date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+  booking_date: z
+    .string()
+    .regex(/^\d{4}-\d{2}-\d{2}$/)
+    .refine((d) => !Number.isNaN(Date.parse(d)) && new Date(d).toISOString().startsWith(d), "Invalid date"),
   slot_hours: z.array(z.number().int().min(0).max(23)).min(1).max(8),
   payment_type: z.enum(["half", "full"]),
   customer_name: z.string().trim().max(80).default(""),
@@ -23,6 +68,15 @@ export const startPayment = createServerFn({ method: "POST" })
     const { keyId } = razorpayCreds();
 
     const hours = [...new Set(data.slot_hours)];
+
+    const { data: turf } = await context.supabase
+      .from("turfs")
+      .select("open_hour, close_hour")
+      .eq("id", data.turf_id)
+      .eq("is_active", true)
+      .maybeSingle();
+    if (!turf) throw new Error("This turf is not taking bookings right now.");
+    assertBookableSlots(turf, data.booking_date, hours);
 
     // One row per hour, inserted in a single statement: if any slot is taken, none are held.
     const { data: rows, error } = await context.supabase
